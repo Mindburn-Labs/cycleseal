@@ -1,0 +1,5 @@
+/cycleseal
+# Never commit a signing key or a live chain.
+.cycleseal/
+*.ed25519
+.cycleseal-demo/
