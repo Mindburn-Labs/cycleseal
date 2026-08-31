@@ -3,6 +3,7 @@ package receipt
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -188,5 +189,54 @@ func TestCanonicalBytesAreStable(t *testing.T) {
 	}
 	if back.Seq != 4 || back.Engine != "claude" {
 		t.Errorf("round trip lost data: %+v", back)
+	}
+}
+
+func TestCanonicalJSONUsesRFC8785KeyOrderAndStringEscaping(t *testing.T) {
+	got, err := canonicalJSON(map[string]any{
+		"\u20ac": "Euro Sign",
+		"\r":     "Carriage Return",
+		"\ufb33": "Hebrew Letter Dalet With Dagesh",
+		"1":      "One",
+		"😀":      "Emoji: Grinning Face",
+		"\u0080": "Control",
+		"ö":      "Latin Small Letter O With Diaeresis",
+		"escape": "\x0f\nA'B\"\\/\u2028",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"\\r\":\"Carriage Return\",\"1\":\"One\",\"escape\":\"\\u000f\\nA'B\\\"\\\\/\u2028\",\"\u0080\":\"Control\",\"ö\":\"Latin Small Letter O With Diaeresis\",\"€\":\"Euro Sign\",\"😀\":\"Emoji: Grinning Face\",\"דּ\":\"Hebrew Letter Dalet With Dagesh\"}"
+	if string(got) != want {
+		t.Fatalf("canonical JSON\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestCanonicalJSONRejectsFloatsAndInvalidUTF8(t *testing.T) {
+	if _, err := canonicalJSON(map[string]any{"float": 1.5}); err == nil {
+		t.Fatal("float was silently canonicalized")
+	}
+	if _, err := canonicalJSON(map[string]any{"bad": string([]byte{0xff})}); err == nil {
+		t.Fatal("invalid UTF-8 was silently canonicalized")
+	}
+}
+
+func TestLegacyReceiptCanonicalizationStillVerifies(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Receipt{Version: LegacyVersion, Engine: "claude", PolicyDecision: DecisionAllow, PublicKey: hex.EncodeToString(pub)}
+	canonical, err := r.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(canonical), `{"version":1,"seq":0,"prev_hash":""`) {
+		t.Fatalf("legacy struct order changed: %s", canonical)
+	}
+	sum := sha256.Sum256(canonical)
+	sealed := Sealed{Receipt: r, Hash: hex.EncodeToString(sum[:]), Signature: hex.EncodeToString(ed25519.Sign(priv, sum[:]))}
+	if rep := Verify([]Sealed{sealed}, pub); !rep.Verified {
+		t.Fatalf("legacy receipt no longer verifies: %+v", rep.Problems)
 	}
 }
