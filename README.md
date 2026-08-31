@@ -143,14 +143,14 @@ on nothing else, so an adversarial reader has a short list of things to audit.
 
 Being clear about these matters more than the feature list.
 
-- **This is not yet a policy enforcement point.** Policy is local and static,
-  evaluated from the command line. Routing the decision through the HELM PEP,
-  so refusals answer to an organisation's policy rather than a JSON file beside
-  the loop, is the next step and is not done.
-- **Receipts are not yet interoperable.** Canonicalisation is struct-order JSON,
-  not RFC 8785 JCS, and the chain is local rather than anchored. Sufficient
-  while cycleseal both produces and verifies; move onto the kernel's
-  canonicalisation and receipt contracts before these travel.
+- **This is not a remote policy enforcement point.** Policy is deliberately
+  local and static so installation remains one binary with no account, network,
+  or service dependency. A future remote policy mode must stay optional.
+- **Receipts use a constrained JCS profile.** Version 2 sorts keys and applies
+  RFC 8785 string escaping, but accepts integers only because this schema has no
+  floating-point fields. Version 1 struct-order receipts remain verifiable.
+  The chain is still local rather than anchored, and its schema is not yet a
+  HELM Kernel receipt contract.
 - **The seam is the invocation, not the agent.** cycleseal governs how the
   engine is launched. What the agent then does inside an allowed cycle is
   bounded by the permission mode it was allowed to run under, not by cycleseal.
