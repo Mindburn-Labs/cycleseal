@@ -1,6 +1,10 @@
 package policy
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestDefaultRefusesThePermissiveModes(t *testing.T) {
 	p := Default()
@@ -62,9 +66,47 @@ func TestNoInputReachesAllowByExhaustion(t *testing.T) {
 		{"claude"},
 		{"claude", "--permission-mode"},
 		{"claude", "--permission-mode", "somethingNew"},
+		{"claude", "--permission-mode", "plan", "--permission-mode", "bypassPermissions"},
+		{"claude", "--permission-mode", "plan", "--permission-mode"},
+		{"claude", "-s", "read-only"},
 	} {
 		if d := p.Evaluate(argv); d.Allow {
 			t.Errorf("argv %q allowed: %s", argv, d.Reason)
+		}
+	}
+	for _, engine := range []string{"codex", "astra", "gpt-6-astra"} {
+		for _, args := range [][]string{
+			nil,
+			{"--sandbox"}, {"-s"}, {"--config"}, {"-c"},
+			{"--sandbox="}, {"-s="}, {"--config=sandbox_mode="},
+			{"--sandbox", "somethingNew"},
+			{"--config", `model="gpt-6-astra"`},
+			{"--ask-for-approval", "on-request"}, {"-a", "never"},
+			{"--approve-for-me"},
+			{"--permission-mode", "plan"},
+			{"--", "--sandbox", "read-only"},
+			{"--sandbox", "read-only", "-s", "danger-full-access"},
+			{"-s", "danger-full-access", "--sandbox", "read-only"},
+			{"--sandbox", "read-only", "--config", `sandbox_mode = "danger-full-access"`},
+			{"--sandbox", "read-only", "--sandbox", "read-only"},
+			{"--sandbox", "read-only", "-s"},
+			{"--sandbox", "read-only", "--config", "sandbox_mode="},
+		} {
+			argv := append([]string{engine}, args...)
+			if d := p.Evaluate(argv); d.Allow {
+				t.Errorf("argv %q allowed: %s", argv, d.Reason)
+			}
+		}
+	}
+	for _, allowed := range [][]string{nil, {}} {
+		p.PermissionModesAllow = allowed
+		for _, requireExplicit := range []bool{true, false} {
+			p.RequireExplicitMode = requireExplicit
+			for _, mode := range []string{"read-only", "somethingNew"} {
+				if d := p.Evaluate([]string{"codex", "--sandbox", mode}); d.Allow {
+					t.Errorf("empty allow list allowed mode %q (require explicit: %v)", mode, requireExplicit)
+				}
+			}
 		}
 	}
 }
@@ -75,6 +117,94 @@ func TestUnknownModeIsRefusedNotAssumedSafe(t *testing.T) {
 	d := Default().Evaluate([]string{"claude", "--permission-mode", "fullAccessV2"})
 	if d.Allow {
 		t.Fatal("an unrecognised mode was assumed safe")
+	}
+	want := `permission mode "fullAccessV2" is not in the allowed set [plan acceptEdits read-only workspace-write]`
+	if d.PermissionMode != "fullAccessV2" || d.Reason != want {
+		t.Fatalf("refusal must name the observed mode and allowed set: %+v", d)
+	}
+}
+
+func TestAstraSandboxSpellings(t *testing.T) {
+	spellings := []struct {
+		name string
+		args func(string) []string
+	}{
+		{"sandbox", func(m string) []string { return []string{"--sandbox", m} }},
+		{"sandbox equals", func(m string) []string { return []string{"--sandbox=" + m} }},
+		{"short sandbox", func(m string) []string { return []string{"-s", m} }},
+		{"short sandbox equals", func(m string) []string { return []string{"-s=" + m} }},
+		{"short sandbox attached", func(m string) []string { return []string{"-s" + m} }},
+		{"config", func(m string) []string { return []string{"--config", `sandbox_mode="` + m + `"`} }},
+		{"config equals", func(m string) []string { return []string{`--config=sandbox_mode="` + m + `"`} }},
+		{"short config", func(m string) []string { return []string{"-c", `sandbox_mode="` + m + `"`} }},
+		{"short config equals", func(m string) []string { return []string{`-c=sandbox_mode="` + m + `"`} }},
+		{"short config attached", func(m string) []string { return []string{`-csandbox_mode="` + m + `"`} }},
+		{"config whitespace", func(m string) []string { return []string{"--config", " sandbox_mode = '" + m + "' "} }},
+	}
+	for _, engine := range []string{"codex", "astra", "gpt-6-astra", "/usr/local/bin/astra", `C:\tools\gpt-6-astra.exe`} {
+		for _, spelling := range spellings {
+			for _, mode := range []string{"read-only", "workspace-write", "danger-full-access", "fullAccessV2"} {
+				t.Run(engine+"/"+spelling.name+"/"+mode, func(t *testing.T) {
+					argv := append([]string{engine, "exec", "--model", "gpt-6-astra"}, spelling.args(mode)...)
+					if got := PermissionMode(argv); got != mode {
+						t.Fatalf("PermissionMode(%q) = %q, want %q", argv, got, mode)
+					}
+					d := Default().Evaluate(argv)
+					wantAllow := mode == "read-only" || mode == "workspace-write"
+					if d.Allow != wantAllow || d.PermissionMode != mode {
+						t.Fatalf("decision = %+v, want allow=%v, mode=%q", d, wantAllow, mode)
+					}
+					if mode == "fullAccessV2" && d.Reason != fmt.Sprintf("permission mode %q is not in the allowed set [plan acceptEdits read-only workspace-write]", mode) {
+						t.Fatalf("refusal lost the observed mode or allowed set: %s", d.Reason)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestBypassFlagsOverrideSafeModes(t *testing.T) {
+	for _, engine := range []string{"codex", "astra", "gpt-6-astra"} {
+		for _, flag := range []string{"--yolo", "--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-approvals-and-sandbox=true"} {
+			for _, args := range [][]string{{flag, "-s", "read-only"}, {"-s", "read-only", flag}} {
+				d := Default().Evaluate(append([]string{engine}, args...))
+				if d.Allow || !strings.Contains(d.Reason, "flag ") || !strings.Contains(d.Reason, "denied by policy") {
+					t.Errorf("%s %q: %+v", engine, args, d)
+				}
+			}
+		}
+	}
+}
+
+func TestRepeatedModesAreRefusedEvenWhenOptional(t *testing.T) {
+	p := Default()
+	p.RequireExplicitMode = false
+	d := p.Evaluate([]string{"astra", "-s", "read-only", "--sandbox", "danger-full-access"})
+	if d.Allow || !strings.Contains(d.Reason, `"read-only"`) || !strings.Contains(d.Reason, `"danger-full-access"`) {
+		t.Fatalf("ambiguous modes must be refused with both values: %+v", d)
+	}
+	for _, argv := range [][]string{
+		{"codex", "--permission-mode", "bypassPermissions"},
+		{"claude", "--sandbox", "danger-full-access"},
+	} {
+		if d := p.Evaluate(argv); d.Allow {
+			t.Errorf("wrong engine's mode treated as absent: %q: %+v", argv, d)
+		}
+	}
+}
+
+func TestCustomEngineStillRequiresAnAllowedMode(t *testing.T) {
+	p := Default()
+	p.Engines = []string{"custom"}
+	p.RequireExplicitMode = false
+	for _, mode := range []string{"read-only", "danger-full-access", "somethingNew"} {
+		d := p.Evaluate([]string{"custom", "--sandbox", mode})
+		if d.Allow != (mode == "read-only") || d.PermissionMode != mode {
+			t.Errorf("custom engine mode %q: %+v", mode, d)
+		}
+	}
+	if d := Default().Evaluate([]string{"claude", "-c", "--permission-mode", "plan"}); !d.Allow {
+		t.Errorf("Claude's continue flag was mistaken for Codex config: %+v", d)
 	}
 }
 

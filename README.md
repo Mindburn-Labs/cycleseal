@@ -84,20 +84,35 @@ verification, `2` usage error, `3` policy refused the cycle.
 
 ## Policy
 
-Omit `-policy` and you get the built-in default: engines `claude` and `codex`,
+Omit `-policy` and you get the built-in default: engines `claude`, `codex`,
+and the Codex-compatible wrapper names `astra` / `gpt-6-astra`,
 modes `plan` / `acceptEdits` / `read-only` / `workspace-write`, with
 `bypassPermissions` and `danger-full-access` denied by name and an unstated mode
 refused outright.
 
 ```json
 {
-  "engines": ["claude", "codex"],
+  "engines": ["claude", "codex", "astra", "gpt-6-astra"],
   "permission_modes_allow": ["plan", "acceptEdits", "read-only", "workspace-write"],
   "permission_modes_deny": ["bypassPermissions", "danger-full-access"],
-  "deny_flags": ["--dangerously-skip-permissions", "--yolo"],
+  "deny_flags": ["--dangerously-skip-permissions", "--yolo", "--dangerously-bypass-approvals-and-sandbox"],
   "require_explicit_mode": true
 }
 ```
+
+Astra is selected in Codex with `--model gpt-6-astra`; it uses Codex's sandbox
+settings. For example:
+
+```sh
+cycleseal run -- codex exec --model gpt-6-astra --sandbox read-only "review the diff"
+```
+
+Codex and the Astra wrapper names accept `--sandbox` / `-s` and
+`--config` / `-c sandbox_mode=...`, including `--flag=value` and attached short
+values. `--ask-for-approval` / `-a` alone do not state a sandbox mode. Repeated
+mode settings are refused, and arguments after the engine's `--` do not count
+as mode flags. A mode outside the allow list reports both the value seen and
+the allowed set; an empty allow list refuses every stated mode.
 
 Two of those defaults are doing more work than they look:
 
