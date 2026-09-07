@@ -37,10 +37,10 @@ type Policy struct {
 // permissive modes by name, and refuse silence.
 func Default() Policy {
 	return Policy{
-		Engines:              []string{"claude", "codex"},
+		Engines:              []string{"claude", "codex", "astra", "gpt-6-astra"},
 		PermissionModesAllow: []string{"plan", "acceptEdits", "read-only", "workspace-write"},
 		PermissionModesDeny:  []string{"bypassPermissions", "danger-full-access"},
-		DenyFlags:            []string{"--dangerously-skip-permissions", "--yolo"},
+		DenyFlags:            []string{"--dangerously-skip-permissions", "--yolo", "--dangerously-bypass-approvals-and-sandbox"},
 		RequireExplicitMode:  true,
 	}
 }
@@ -107,7 +107,10 @@ func (p Policy) Evaluate(argv []string) Decision {
 		}
 	}
 
-	mode := PermissionMode(argv)
+	mode, err := permissionMode(argv)
+	if err != nil {
+		return Decision{Engine: engine, Reason: err.Error()}
+	}
 	if mode == "" {
 		if p.RequireExplicitMode {
 			return Decision{
@@ -124,48 +127,94 @@ func (p Policy) Evaluate(argv []string) Decision {
 			Reason:         fmt.Sprintf("permission mode %q is denied by policy", mode),
 		}
 	}
-	if len(p.PermissionModesAllow) > 0 && !contains(p.PermissionModesAllow, mode) {
+	if contains(p.PermissionModesAllow, mode) {
 		return Decision{
+			Allow:          true,
 			Engine:         engine,
 			PermissionMode: mode,
-			Reason:         fmt.Sprintf("permission mode %q is not in the allowed set %v", mode, p.PermissionModesAllow),
+			Reason:         fmt.Sprintf("allowed: engine %q, permission mode %q", engine, mode),
 		}
 	}
 	return Decision{
-		Allow:          true,
 		Engine:         engine,
 		PermissionMode: mode,
-		Reason:         fmt.Sprintf("allowed: engine %q, permission mode %q", engine, mode),
+		Reason:         fmt.Sprintf("permission mode %q is not in the allowed set %v", mode, p.PermissionModesAllow),
 	}
 }
 
-// PermissionMode extracts the mode from a command line, covering the spellings
-// the two common engines use.
+// PermissionMode extracts one explicit mode. Astra aliases use Codex's sandbox
+// flags; approval settings alone do not specify a sandbox. Missing, malformed,
+// or repeated modes return an empty string.
 func PermissionMode(argv []string) string {
-	for i, a := range argv {
-		switch {
-		case a == "--permission-mode" && i+1 < len(argv):
-			return unquote(argv[i+1])
-		case strings.HasPrefix(a, "--permission-mode="):
-			return unquote(strings.TrimPrefix(a, "--permission-mode="))
-		case a == "-c" && i+1 < len(argv):
-			if v, ok := configAssign(argv[i+1], "sandbox_mode"); ok {
-				return v
-			}
-		case strings.HasPrefix(a, "--sandbox="):
-			return unquote(strings.TrimPrefix(a, "--sandbox="))
-		case a == "--sandbox" && i+1 < len(argv):
-			return unquote(argv[i+1])
-		}
+	mode, _ := permissionMode(argv)
+	return mode
+}
+
+func permissionMode(argv []string) (string, error) {
+	if len(argv) == 0 {
+		return "", nil
 	}
-	return ""
+	engine := engineName(argv[0])
+	codex := engine == "codex" || engine == "astra" || engine == "gpt-6-astra"
+	mode := ""
+	for i := 1; i < len(argv); i++ {
+		a := argv[i]
+		if a == "--" {
+			break
+		}
+		flag, value, inline := strings.Cut(a, "=")
+		if codex && len(a) > 2 && (strings.HasPrefix(a, "-s") || strings.HasPrefix(a, "-c")) {
+			flag, value, inline = a[:2], strings.TrimPrefix(a[2:], "="), true
+		}
+		switch flag {
+		case "--permission-mode":
+			if codex {
+				return "", fmt.Errorf("flag %s does not specify a sandbox mode for engine %q", flag, engine)
+			}
+		case "--sandbox", "-s", "--config", "-c":
+			if engine == "claude" {
+				// Claude's -c means continue, not a configuration override.
+				if flag == "-c" && !inline {
+					continue
+				}
+				return "", fmt.Errorf("flag %s does not specify a permission mode for engine %q", flag, engine)
+			}
+		default:
+			continue
+		}
+		if !inline {
+			i++
+			if i >= len(argv) || strings.HasPrefix(argv[i], "-") {
+				return "", fmt.Errorf("flag %s requires a value", flag)
+			}
+			value = argv[i]
+		}
+		if flag == "-c" || flag == "--config" {
+			var ok bool
+			value, ok = configAssign(value, "sandbox_mode")
+			if !ok {
+				continue
+			}
+		} else {
+			value = unquote(value)
+		}
+		if value == "" {
+			return "", fmt.Errorf("flag %s states an empty permission mode", flag)
+		}
+		if mode != "" {
+			return "", fmt.Errorf("multiple permission modes stated: %q and %q; policy requires one explicit mode", mode, value)
+		}
+		mode = value
+	}
+	return mode, nil
 }
 
 func configAssign(s, key string) (string, bool) {
-	if !strings.HasPrefix(s, key+"=") {
+	k, value, ok := strings.Cut(s, "=")
+	if !ok || strings.TrimSpace(k) != key {
 		return "", false
 	}
-	return unquote(strings.TrimPrefix(s, key+"=")), true
+	return unquote(strings.TrimSpace(value)), true
 }
 
 func engineName(path string) string {
