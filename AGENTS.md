@@ -1,5 +1,17 @@
 # Agent Operational Guidelines for cycleseal
 
+<!-- helm-sdlc-baseline:v1 -->
+Apply the [HELM SDLC baseline](https://github.com/Mindburn-Labs/docs/blob/main/ai/sdlc.md).
+Before implementation, define the outcome and observable acceptance conditions.
+Use the existing tracker and isolated worktree; verify in proportion to risk with
+the owning repository's checks. Bind results to the tested source and configuration.
+Missing, skipped or inconclusive required checks are not passes. Report source,
+CI, release, deployment, runtime and user acceptance separately; verify applicable
+rollback, restoration and external-effect recovery. Use `Refs` while acceptance
+work remains and `Closes` only when the whole issue is fulfilled. Preserve existing
+authority boundaries and never bypass failed checks or move published tags.
+<!-- /helm-sdlc-baseline -->
+
 cycleseal wraps the engine call of an autonomous agent loop. It refuses a cycle
 whose command line fails a local, static policy, and seals every cycle, refused
 or run, into an append-only signed receipt chain that `cycleseal verify` checks
