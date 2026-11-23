@@ -16,12 +16,11 @@ cycleseal keygen                 # writes a signing key and prints the trust roo
 cycleseal demo                   # run the bundled demonstration
 ```
 
-Wrap the loop's engine invocation with `cycleseal run`. This example shows a
-policy refusal.
+Wrap the loop's engine invocation with `cycleseal run`. After `keygen`, try
+this refusal with the built-in policy:
 
-```diff
-- claude -p "$PROMPT" --permission-mode bypassPermissions
-+ cycleseal run --prompt-file PROMPT.md -- claude -p "$PROMPT" --permission-mode bypassPermissions
+```sh
+cycleseal run -- claude -p "review the diff" --permission-mode bypassPermissions
 ```
 
 ```

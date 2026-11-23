@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/Mindburn-Labs/cycleseal/internal/policy"
@@ -105,8 +106,13 @@ func cmdRun(args []string) int {
 	promptFile := fs.String("prompt-file", "", "file holding the cycle prompt, hashed into the receipt")
 	quiet := fs.Bool("quiet", false, "do not mirror engine output to this terminal")
 
-	engineArgv := splitAfterDoubleDash(args)
-	if err := fs.Parse(argsBeforeDoubleDash(args)); err != nil {
+	wrapperArgs := args
+	var engineArgv []string
+	if separator := slices.Index(args, "--"); separator >= 0 {
+		wrapperArgs = args[:separator]
+		engineArgv = args[separator+1:]
+	}
+	if err := fs.Parse(wrapperArgs); err != nil {
 		return exitUsage
 	}
 	if len(engineArgv) == 0 {
@@ -290,24 +296,6 @@ func hashPrompt(path string, argv []string) (string, error) {
 		}
 	}
 	return receipt.SHA256Hex(nil), nil
-}
-
-func argsBeforeDoubleDash(args []string) []string {
-	for i, a := range args {
-		if a == "--" {
-			return args[:i]
-		}
-	}
-	return args
-}
-
-func splitAfterDoubleDash(args []string) []string {
-	for i, a := range args {
-		if a == "--" {
-			return args[i+1:]
-		}
-	}
-	return nil
 }
 
 func shortHash(h string) string {
