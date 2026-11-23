@@ -1,22 +1,14 @@
-// Command cycleseal governs an autonomous loop at its one narrow seam — the
-// engine invocation — and leaves a signed, append-only chain of what happened.
-//
-// Loops of this class carry their state between cycles in a markdown file the
-// agent itself rewrites, and run the engine with permissions fully open.
-// cycleseal changes two things and nothing else: the permissive cycle is
-// refused before it starts, and every cycle, refused or run, is sealed into a
-// chain that cannot be quietly edited afterwards.
+// Command cycleseal applies a local launch policy and records refusals and
+// engine runs in a signed receipt chain.
 package main
 
 import (
 	"crypto/ed25519"
 	"encoding/hex"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/Mindburn-Labs/cycleseal/internal/policy"
@@ -323,67 +315,4 @@ func shortHash(h string) string {
 		return h
 	}
 	return h[:12]
-}
-
-// cmdDemo runs the whole story end to end in a scratch directory: a permissive
-// cycle refused, a governed cycle sealed, the chain verified, the chain
-// tampered with, and the tampering caught.
-func cmdDemo() int {
-	dir := ".cycleseal-demo"
-	_ = os.RemoveAll(dir)
-	store := receipt.Store{Dir: dir}
-	pub, err := store.Keygen()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "cycleseal: "+err.Error())
-		return exitUsage
-	}
-	polPath := filepath.Join(dir, "policy.json")
-	// The demo governs /bin/echo standing in for an engine, so the story runs
-	// anywhere without Claude or Codex installed.
-	if err := os.WriteFile(polPath, []byte(`{"engines":["echo"],"permission_modes_allow":["plan"],"permission_modes_deny":["bypassPermissions"],"require_explicit_mode":true}`), 0o644); err != nil {
-		fmt.Fprintln(os.Stderr, "cycleseal: "+err.Error())
-		return exitUsage
-	}
-
-	step := func(n int, title string) { fmt.Printf("\n── %d. %s\n", n, title) }
-
-	fmt.Printf("cycleseal %s — demo in %s/\ntrust root %s\n", version, dir, shortHash(hex.EncodeToString(pub)))
-
-	step(1, "the cycle an ungoverned loop runs today")
-	fmt.Println("   $ cycleseal run -- echo --permission-mode bypassPermissions")
-	code := cmdRun([]string{"-state", dir, "-policy", polPath, "--", "echo", "--permission-mode", "bypassPermissions"})
-	fmt.Printf("   exit %d\n", code)
-
-	step(2, "a cycle policy accepts")
-	fmt.Println("   $ cycleseal run -- echo --permission-mode plan")
-	code = cmdRun([]string{"-state", dir, "-policy", polPath, "-quiet", "--", "echo", "--permission-mode", "plan", "cycle output"})
-	fmt.Printf("   exit %d\n", code)
-
-	step(3, "the chain so far")
-	cmdLog([]string{"-state", dir})
-
-	step(4, "verify against the trust root")
-	cmdVerify([]string{"-state", dir})
-
-	step(5, "edit a sealed receipt, the way a markdown baton would be edited")
-	if err := tamper(filepath.Join(dir, "chain.jsonl")); err != nil {
-		fmt.Fprintln(os.Stderr, "cycleseal: "+err.Error())
-		return exitUsage
-	}
-	fmt.Println("   rewrote receipt #0 to say the permissive cycle was allowed")
-	code = cmdVerify([]string{"-state", dir})
-	fmt.Printf("\nexit %d — the edit is detectable, which is the whole difference between\na chain and a file the agent can rewrite.\n", code)
-	return exitOK
-}
-
-func tamper(path string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	out := strings.Replace(string(b), `"policy_decision":"deny"`, `"policy_decision":"allow"`, 1)
-	if out == string(b) {
-		return errors.New("demo could not find the receipt to tamper with")
-	}
-	return os.WriteFile(path, []byte(out), 0o644)
 }

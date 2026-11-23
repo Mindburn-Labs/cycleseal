@@ -1,22 +1,9 @@
 # cycleseal
 
-Governed mode for an autonomous loop.
-
-Loops that run an AI agent around the clock share a shape: a daemon, a prompt,
-one engine invocation per cycle, and a markdown file carried between cycles as
-state. That shape has two properties nobody chose. The engine runs with
-permissions fully open, because that is what keeps the loop from stalling on a
-prompt. And the state file is rewritten each cycle by the agent itself, so
-nothing downstream can tell what it used to say.
-
-cycleseal changes exactly two things and leaves the rest of your loop alone:
-
-- **The permissive cycle is refused before it starts.** Policy is evaluated
-  against the command line, and there is no path through it that reaches
-  *allow* by running out of checks.
-- **Every cycle is sealed into an append-only signed chain** — the refused ones
-  too. A chain can still be edited. It cannot be edited undetectably, and that
-  is the whole difference.
+cycleseal applies a local policy before launching an agent engine. It appends a
+signed receipt for a policy refusal or the result of an allowed cycle.
+`cycleseal verify` checks receipt contents, sequence, and links against a trusted
+Ed25519 public key.
 
 **Status: early prototype (v0.1).** Built by [Mindburn Labs](https://mindburn.org).
 
@@ -26,10 +13,11 @@ cycleseal changes exactly two things and leaves the rest of your loop alone:
 go install github.com/Mindburn-Labs/cycleseal/cmd/cycleseal@latest
 
 cycleseal keygen                 # writes a signing key and prints the trust root
-cycleseal demo                   # the whole story in a scratch directory
+cycleseal demo                   # run the bundled demonstration
 ```
 
-Then wrap the engine call your loop already makes. One line changes:
+Wrap the loop's engine invocation with `cycleseal run`. This example shows a
+policy refusal.
 
 ```diff
 - claude -p "$PROMPT" --permission-mode bypassPermissions
@@ -41,12 +29,13 @@ cycleseal: REFUSED — permission mode "bypassPermissions" is denied by policy
 cycleseal: sealed as receipt #0 34716621a424
 ```
 
-The loop's own retry and backoff handle the non-zero exit. Change the mode to
-one policy accepts and the cycle runs, is sealed, and shows up in the chain.
+A policy refusal exits with status `3`. An allowed invocation runs the engine
+and records its result in the same chain.
 
 ## The demo, end to end
 
-`cycleseal demo` runs against `/bin/echo`, so it works with no engine installed:
+`cycleseal demo` uses the system `echo` command in place of an agent engine.
+The abbreviated output below shows the steps and verification results.
 
 ```
 ── 1. the cycle an ungoverned loop runs today
@@ -77,6 +66,7 @@ cycleseal keygen [-state DIR]
 cycleseal run    [-state DIR] [-policy FILE] [-prompt-file FILE] -- <engine> [args...]
 cycleseal verify [-state DIR] [-key HEX] [-json]
 cycleseal log    [-state DIR]
+cycleseal demo
 ```
 
 Exit codes: `0` ran or verified, `1` engine failed or chain failed
@@ -114,15 +104,9 @@ mode settings are refused, and arguments after the engine's `--` do not count
 as mode flags. A mode outside the allow list reports both the value seen and
 the allowed set; an empty allow list refuses every stated mode.
 
-Two of those defaults are doing more work than they look:
-
-**`require_explicit_mode`.** A command line that names no permission mode is
-refused. An unstated mode is not a safe mode — it inherits whatever the engine
-defaults to, and the loops this tool exists for default to the most permissive
-setting available. Absence must not read as consent.
-
-**The allow list is closed.** A mode nobody thought to put in the deny list is
-still refused. New permissive flags ship faster than deny lists grow.
+With `require_explicit_mode`, the command line must state a mode. A stated mode
+must appear in `permission_modes_allow`. An entry in `permission_modes_deny`
+takes precedence if the mode appears in both lists.
 
 ## What a receipt records
 
@@ -131,47 +115,36 @@ it started and ended, the engine and the full argv, the permission mode, the
 hash of the prompt, the hash of the policy that judged it, the decision and its
 reason, the engine's exit code, and the hash and size of its output.
 
-The refusals are in there too. That is what makes "the loop was governed" a
-thing someone can check, rather than a claim about a gap in the record.
+The same schema records both allowed and refused cycles.
 
 ## Verification
 
-`cycleseal verify` re-derives every hash, walks the links, and checks every
-signature — offline, against a public key **supplied from outside the chain**.
+`cycleseal verify` checks hashes, sequence, links, and signatures offline. It
+uses the external public key from `trusted.pub` in the state directory or the
+hex-encoded key passed with `-key`. Each receipt must record that same key.
 
-The key each receipt carries is checked for agreement but is never the
-authority. A chain that vouches for itself with its own key establishes only
-that it is internally consistent, which is not the question anyone reading it
-is asking. Hand your trust root to whoever will check the chain, or pass it with
-`-key`.
+The verifier rejects an empty chain. A successful result authenticates the
+receipts presented. Establishing completeness requires an independently
+recorded final hash or receipt count.
 
-The verifier also fails on an empty chain. Nothing to check is not the same as
-nothing wrong.
+## Dependencies
 
-## No dependencies
-
-`go.mod` has no `require` block, and `make check` fails if one appears. The
-verifier's trust story rests on the standard library's Ed25519 and SHA-256 and
-on nothing else, so an adversarial reader has a short list of things to audit.
+Cycleseal uses the Go standard library, including Ed25519 and SHA-256 for
+verification. `make check` rejects `require` directives in `go.mod`.
 
 ## Limits
 
-Being clear about these matters more than the feature list.
-
-- **This is not a remote policy enforcement point.** Policy is deliberately
-  local and static so installation remains one binary with no account, network,
-  or service dependency. A future remote policy mode must stay optional.
+- **Policy is local and static.** The CLI runs as one binary with no account or
+  service dependency.
 - **Receipts use a constrained JCS profile.** Version 2 sorts keys and applies
   RFC 8785 string escaping, but accepts integers only because this schema has no
   floating-point fields. Version 1 struct-order receipts remain verifiable.
   The chain is still local rather than anchored, and its schema is not yet a
   HELM Kernel receipt contract.
-- **The seam is the invocation, not the agent.** cycleseal governs how the
-  engine is launched. What the agent then does inside an allowed cycle is
-  bounded by the permission mode it was allowed to run under, not by cycleseal.
-- **A local key is a local claim.** Anyone who can read `key.ed25519` can sign a
-  chain. Custody of that key is the security boundary, and this prototype does
-  nothing to protect it beyond file permissions.
+- **Policy applies at launch.** The engine is responsible for its permission
+  enforcement during a cycle.
+- **File permissions protect the signing key.** Anyone who can read
+  `key.ed25519` can sign a receipt.
 
 ## License
 
