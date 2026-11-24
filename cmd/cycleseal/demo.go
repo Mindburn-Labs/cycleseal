@@ -14,8 +14,13 @@ import (
 // cmdDemo records a refusal and an allowed cycle, verifies the chain, then
 // edits a sample receipt to demonstrate a verification failure.
 func cmdDemo() int {
-	dir := ".cycleseal-demo"
-	_ = os.RemoveAll(dir)
+	dir, err := os.MkdirTemp("", "cycleseal-demo-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cycleseal: "+err.Error())
+		return exitUsage
+	}
+	defer os.RemoveAll(dir)
+
 	store := receipt.Store{Dir: dir}
 	pub, err := store.Keygen()
 	if err != nil {
@@ -29,35 +34,41 @@ func cmdDemo() int {
 		return exitUsage
 	}
 
-	step := func(n int, title string) { fmt.Printf("\n── %d. %s\n", n, title) }
-
-	fmt.Printf("cycleseal %s — demo in %s/\ntrust root %s\n", version, dir, shortHash(hex.EncodeToString(pub)))
-
-	step(1, "the cycle an ungoverned loop runs today")
-	fmt.Println("   $ cycleseal run -- echo --permission-mode bypassPermissions")
-	code := cmdRun([]string{"-state", dir, "-policy", polPath, "--", "echo", "--permission-mode", "bypassPermissions"})
-	fmt.Printf("   exit %d\n", code)
-
-	step(2, "a cycle policy accepts")
-	fmt.Println("   $ cycleseal run -- echo --permission-mode plan")
-	code = cmdRun([]string{"-state", dir, "-policy", polPath, "-quiet", "--", "echo", "--permission-mode", "plan", "cycle output"})
-	fmt.Printf("   exit %d\n", code)
-
-	step(3, "the chain so far")
-	cmdLog([]string{"-state", dir})
-
-	step(4, "verify against the trust root")
-	cmdVerify([]string{"-state", dir})
-
-	step(5, "edit a sealed receipt, the way a markdown baton would be edited")
+	runArgs := []string{"run", "-state", dir, "-policy", polPath, "-quiet", "--", "echo", "--permission-mode"}
+	verifyArgs := []string{"verify", "-state", dir, "-key", hex.EncodeToString(pub)}
+	fmt.Printf("cycleseal %s — demo\n", version)
+	steps := []struct {
+		title string
+		args  []string
+		want  int
+	}{
+		{"Refuse a disallowed mode", append(runArgs, "bypassPermissions"), exitRefused},
+		{"Run a cycle in plan mode", append(runArgs, "plan", "cycle output"), exitOK},
+		{"Show both receipts", []string{"log", "-state", dir}, exitOK},
+		{"Verify the original chain", verifyArgs, exitOK},
+	}
+	for _, step := range steps {
+		if !demoStep(step.title, step.args, step.want) {
+			return exitFailed
+		}
+	}
 	if err := tamper(filepath.Join(dir, "chain.jsonl")); err != nil {
 		fmt.Fprintln(os.Stderr, "cycleseal: "+err.Error())
 		return exitUsage
 	}
-	fmt.Println("   rewrote receipt #0 to say the permissive cycle was allowed")
-	code = cmdVerify([]string{"-state", dir})
-	fmt.Printf("\nexit %d — the edit is detectable, which is the whole difference between\na chain and a file the agent can rewrite.\n", code)
+	if !demoStep("Verify after changing the refused receipt", verifyArgs, exitFailed) {
+		return exitFailed
+	}
 	return exitOK
+}
+
+func demoStep(title string, args []string, want int) bool {
+	fmt.Printf("\n%s\n", title)
+	if code := run(args); code != want {
+		fmt.Fprintf(os.Stderr, "cycleseal: %s exited %d, expected %d\n", args[0], code, want)
+		return false
+	}
+	return true
 }
 
 func tamper(path string) error {
