@@ -26,9 +26,9 @@ cycle.
 * Build: `make build` (`go build ./...`)
 * Test: `make test` (`go test ./...`)
 * Format: `make fmt` (`gofmt -l -w .`)
-* Demo: `make demo` refuses a permissive cycle, seals an allowed one, verifies
-  the chain and shows a tampered receipt failing, all against `/bin/echo` in
-  `.cycleseal-demo/`. `make clean` removes it.
+* Demo: `make demo` refuses a permissive cycle, seals an allowed `echo` run,
+  verifies the temporary chain, and checks that verification fails after a
+  receipt is edited.
 
 The Makefile sets `GOWORK=off`, so the module builds standalone.
 

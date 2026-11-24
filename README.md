@@ -34,25 +34,25 @@ and records its result in the same chain.
 ## The demo, end to end
 
 `cycleseal demo` uses the system `echo` command in place of an agent engine.
-The abbreviated output below shows the steps and verification results.
+It creates a temporary chain for the demonstration and removes it on exit.
 
 ```
-── 1. the cycle an ungoverned loop runs today
+Refuse a disallowed mode
 cycleseal: REFUSED — permission mode "bypassPermissions" is denied by policy
 cycleseal: sealed as receipt #0 34716621a424
 
-── 2. a cycle policy accepts
+Run a cycle in plan mode
 cycleseal: sealed receipt #1 0a031a673bb7 (engine exit 0, 36 bytes out)
 
-── 3. the chain so far
+Show both receipts
 #0   34716621a424  deny   echo   mode=bypassPermissions  exit=-1
       permission mode "bypassPermissions" is denied by policy
 #1   0a031a673bb7  allow  echo   mode=plan               exit=0
 
-── 4. verify against the trust root
+Verify the original chain
 VERIFIED
 
-── 5. edit a sealed receipt, the way a markdown baton would be edited
+Verify after changing the refused receipt
 FAILED
   receipt #0: recorded hash 34716621a424… does not match the receipt body: the body was edited after sealing
   receipt #0: signature does not verify against the trusted key

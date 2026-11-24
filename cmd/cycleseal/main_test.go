@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -55,5 +56,31 @@ func TestRefusedAstraInvocationsAreSealedAndVerify(t *testing.T) {
 	}
 	if code := run([]string{"verify", "-state", store.Dir, "-key", hex.EncodeToString(pub)}); code != exitOK {
 		t.Fatalf("verify exit = %d, want %d", code, exitOK)
+	}
+}
+
+func TestDemoKeepsExistingState(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const dir = ".cycleseal-demo"
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "keep")
+	if err := os.WriteFile(path, []byte("existing data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := run([]string{"demo"}); code != exitOK {
+		t.Fatalf("demo exit = %d, want %d", code, exitOK)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "existing data" {
+		t.Fatalf("existing demo state = %q, err = %v", data, err)
+	}
+}
+
+func TestDemoFailsWhenEngineCannotStart(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	if code := run([]string{"demo"}); code != exitFailed {
+		t.Fatalf("demo exit = %d, want %d", code, exitFailed)
 	}
 }
